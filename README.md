@@ -3,13 +3,15 @@
 ## Overview
 This document describes the full set of changes made to the Roo-Code VS Code extension (version 3.15.6) to:
 
-1. Properly fetch and track the context window size for LM Studio models.
+1. Retrieve and expose LM Studio model `contextWindow` via its REST API `/v1/models/{model}`, addressing the fact that its OpenAI-compatible provider did not supply this information to Roo-Code.
 2. Improve token counting accuracy and the context window progress bar UI.
 
 By following these steps, other developers can reproduce the fix in their own installations or extension builds.
 
 ## Problem Statement
 - **Missing LM Studio Context Window**: Roo-Code originally did not retrieve nor expose the `contextWindow` parameter from LM Studio models, preventing the UI from accurately representing how many tokens remain or are used.
+- **OpenAI vs LM Studio Context Info**: Roo-Code's OpenAI provider includes `context_window` information directly, but LM Studio's OpenAI-compatible API did not supply the `contextWindow` parameter to `api.getModel()`, so the extension was unaware of the true context limit.
+- **Explicit LM Studio REST API Fetch**: We now issue a REST API call to LM Studio's `/v1/models/{model}` endpoint to retrieve and expose the `contextWindow` property for LM Studio models.
 - **Token Counting Inaccuracies**: The extension's token counter included non-chat content (JSON, XML, commit hashes), inflating token usage and misrepresenting the actual context load.
 
 ---
@@ -23,15 +25,17 @@ LM Studio models provide a `contextWindow` property indicating the maximum numbe
 1. **Async/Synchronous Model Fetch** (`ClineProvider.ts`)
    - Unified handling of `api.getModel()` calls that may return either a value or a promise.
    - Extracted `contextWindow` from `model.info` and stored in `lmStudioModelInfo`.
-2. **Extension WASM Initialization** (`extension.ts`)
+2. **Explicit REST API Model Info Fetch** (`ClineProvider.ts`)
+   - Fetched the `contextWindow` from LM Studio's REST API `/v1/models/{model}` endpoint when `api.getModel()` did not include it.
+3. **Extension WASM Initialization** (`extension.ts`)
    - Early-set `TIKTOKEN_WASM_PATH` so `tiktoken/lite` can load its WebAssembly module.
    - Verified `ensureWasmFilesExist` uses the correct package name.
-3. **Extension State Updates**
+4. **Extension State Updates**
    - Extended the shared `ExtensionState` interface to include:
      - `contextWindow` (number)
      - `lmStudioModelInfo` (object)
    - Wired these values into `ExtensionStateContext.tsx` for consumption in the webview.
-4. **Webview UI Propagation**
+5. **Webview UI Propagation**
    - In `TaskHeader.tsx`, passed an `onlyCurrent` flag when `apiProvider === 'lmstudio'`.
    - Updated `ContextWindowProgress.tsx` to consume `contextWindow` and `contextTokens` and render only the "used" slice for LM Studio models.
    - Replaced `path.basename` calls in `context-mentions.ts` with a split-based fallback to ensure compatibility with Vite builds.
