@@ -1,0 +1,108 @@
+diff --git a/src/core/webview/ClineProvider.ts b/src/core/webview/ClineProvider.ts
+index abcdef0..1234567 100644
+--- a/src/core/webview/ClineProvider.ts
++++ b/src/core/webview/ClineProvider.ts
+@@ -1211,7 +1211,8 @@ capture LM Studio model info
+-        const { info: model } = result as any
++        // Handle async or sync getModel() calls
++        const { info: model } = result instanceof Promise ? await result : result
+         lmStudioModelInfo = { contextWindow: model.contextWindow ?? null }
+@@ -1278,14 +1279,26 @@ compute token usage
+-        // Compute accurate context token usage via tiktoken for true API conversation
+-        let contextTokens: number | undefined = undefined
+-        if (currentCline) {
+-            // Use previous apiConversationHistory for token counting
+-            const apiHistory = currentCline.apiConversationHistory || []
+-            const contentBlocks = apiHistory.map(msg => ({ type: 'text', text: (msg.content as string) || '' }))
+-            contextTokens = await countTokens(contentBlocks as Anthropic.Messages.ContentBlockParam[])
+-        }
++        // Compute accurate context token usage via tiktoken
++        let contextTokens: number | undefined = undefined
++        if (currentCline) {
++            // Start with only user asks and assistant says
++            const chatHistory = currentCline.clineMessages || []
++            const chatBlocks = chatHistory
++                .filter(msg => msg.type === 'ask' || msg.type === 'say')
++                .map(msg => ({ type: 'text', text: (msg as any).text || '' }))
++            this.log(`Token debug: chatHistory length=${chatHistory.length}, chatBlocks length=${chatBlocks.length}`)
++            // Filter out non-chat content: empty strings, JSON/XML blocks, commit hashes
++            const filteredBlocks = chatBlocks.filter(b => {
++                const t = b.text.trim()
++                if (!t || t.startsWith('{') || t.startsWith('<')) return false
++                if (/^[0-9a-f]{7,}$/i.test(t)) return false
++                return true
++            })
++            this.log(`Token debug: filteredBlocks length=${filteredBlocks.length}`)
++            // Calculate token count from filtered blocks
++            contextTokens = await countTokens(filteredBlocks as Anthropic.Messages.ContentBlockParam[])
++            this.log(`Token debug: computed contextTokens=${contextTokens}`)
++        }
+@@ -1333,7 +1348,8 @@ output state
+-        contextTokens,
++        contextTokens,
++        lmStudioModelInfo,
+ }
+diff --git a/src/utils/countTokens.ts b/src/utils/countTokens.ts
+index 1111111..2222222 100644
+--- a/src/utils/countTokens.ts
++++ b/src/utils/countTokens.ts
+@@ catch (error) {
+-        const FUDGE = 1.5
++        // Fallback fudge factor when using char estimation
++        const FUDGE = 1.0
+diff --git a/webview-ui/src/utils/context-mentions.ts b/webview-ui/src/utils/context-mentions.ts
+index 3333333..4444444 100644
+--- a/webview-ui/src/utils/context-mentions.ts
++++ b/webview-ui/src/utils/context-mentions.ts
+@@ export function getBasename(filePath: string): string {
+-    return path.basename(filePath)
++    // Avoid Node path in browser; split on forward/back slashes
++    return filePath.split(/[\\/]/).pop() || filePath
+ }
+diff --git a/webview-ui/src/components/chat/TaskHeader.tsx b/webview-ui/src/components/chat/TaskHeader.tsx
+index 5555555..6666666 100644
+--- a/webview-ui/src/components/chat/TaskHeader.tsx
++++ b/webview-ui/src/components/chat/TaskHeader.tsx
+@@ <ContextWindowProgress
+-    maxTokens={reservedForOutput + availableSize}
++    maxTokens={reservedForOutput + availableSize}
++    onlyCurrent={apiProvider === 'lmstudio'}
+ />
+diff --git a/webview-ui/src/components/chat/ContextWindowProgress.tsx b/webview-ui/src/components/chat/ContextWindowProgress.tsx
+index 7777777..8888888 100644
+--- a/webview-ui/src/components/chat/ContextWindowProgress.tsx
++++ b/webview-ui/src/components/chat/ContextWindowProgress.tsx
+@@ if (onlyCurrent) {
+-        return (
+-            <div className="flex items-center h-1 rounded-[2px] overflow-hidden w-full bg-[color-mix(in_srgb,var(--vscode-foreground)_20%,transparent)]">
+-                <div
+-                    data-testid="context-tokens-used"
+-                    title={t("chat:tokenProgress.tokensUsed", {
+-                        used: formatLargeNumber(safeContextTokens),
+-                        total: formatLargeNumber(safeContextWindow),
+-                    })}
+-                    className="h-full bg-[var(--vscode-foreground)]"
+-                    style={{ width: `${currentPercent}%` }}
+-                />
+-            </div>
+-        )
++        return (
++            <div className="flex items-center gap-2 flex-1 whitespace-nowrap px-2 text-[var(--vscode-foreground)]">
++                {/* Numeric tokens used */}
++                <div data-testid="context-tokens-count">{formatLargeNumber(safeContextTokens)}</div>
++                {/* Single-bar progress */}
++                <div className="flex items-center h-1 rounded-[2px] overflow-hidden flex-1 bg-[color-mix(in_srgb,var(--vscode-foreground)_20%,transparent)]">
++                    <div
++                        data-testid="context-tokens-used"
++                        title={t("chat:tokenProgress.tokensUsed", { used: formatLargeNumber(safeContextTokens), total: formatLargeNumber(safeContextWindow) })}
++                        className="h-full bg-[var(--vscode-foreground)]"
++                        style={{ width: `${currentPercent}%` }}
++                    />
++                </div>
++                {/* Numeric context window size */}
++                <div data-testid="context-window-size">{formatLargeNumber(safeContextWindow)}</div>
++            </div>
++        )
++    }
+
+</rewritten_file> 
